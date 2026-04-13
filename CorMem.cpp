@@ -1,5 +1,5 @@
 #include "CorMem.h"
-
+#include <iostream>
 
 BOOLEAN 
 CorMem::KernelRead(
@@ -7,14 +7,23 @@ CorMem::KernelRead(
 	PVOID	ReadBuffer,
 	SIZE_T	ReadSize)
 {
+	if (INVALID_HANDLE_VALUE == m_hCorMem)
+	{
+		std::cout << "[-] CorMem device is not available." << std::endl;
+		return FALSE;
+	}
+
 	if (!VirtualAddress || !ReadBuffer || !ReadSize)
 	{
+		std::cout << "[-] Invalid parameters for KernelRead." << std::endl;
 		return FALSE;
 	}
 
 	PVOID pPhysicalAddress = VirtualToPhysical(VirtualAddress);
 	if (!pPhysicalAddress)
 	{
+		// 测试在Windows11 26200 存在错误 
+		std::cout << "[-] Failed to translate virtual address to physical address." << std::endl;
 		return FALSE;
 	}
 
@@ -25,6 +34,7 @@ CorMem::KernelRead(
 	auto pMappedAddress = MapPhysicalMemory(reinterpret_cast<PVOID>(PageBase), MapSize);
 	if (!pMappedAddress)
 	{
+		std::cout << "[-] Failed to map physical memory With Read. Error code: " << GetLastError() << std::endl;
 		return FALSE;
 	}
 
@@ -42,12 +52,14 @@ CorMem::KernelWrite(
 {
 	if (!VirtualAddress || !WriteBuffer || !WriteSize)
 	{
+		std::cout << "[-] Invalid parameters for KernelWrite." << std::endl;
 		return FALSE;
 	}
 
 	PVOID pPhysicalAddress = VirtualToPhysical(VirtualAddress);
 	if (!pPhysicalAddress)
 	{
+		std::cout << "[-] Failed to translate virtual address to physical address." << std::endl;
 		return FALSE;
 	}
 
@@ -58,6 +70,7 @@ CorMem::KernelWrite(
 	auto pMappedAddress = MapPhysicalMemory(reinterpret_cast<PVOID>(PageBase), MapSize);
 	if (!pMappedAddress)
 	{
+		std::cout << "[-] Failed to map physical memory. Error code: " << GetLastError() << std::endl;
 		return FALSE;
 	}
 
@@ -116,18 +129,32 @@ CorMem::VirtualToPhysical(PVOID VirtualAddress)
 {
 	if (!VirtualAddress)
 	{
+		std::cout << "[-] Invalid virtual address for translation." << std::endl;
 		return nullptr;
 	}
 
 	PVOID pPhysicalAddress = VirtualAddress;
 	DWORD returned = 0;
-	DeviceIoControl(m_hCorMem, 
-					IOCTL_V2P, 
-					&pPhysicalAddress,
-					sizeof(pPhysicalAddress), 
-					&pPhysicalAddress, 
-					sizeof(pPhysicalAddress), 
-					&returned, 
-					nullptr);
+	auto bRet = DeviceIoControl(m_hCorMem,
+								IOCTL_V2P,
+								&pPhysicalAddress,
+								sizeof(pPhysicalAddress),
+								&pPhysicalAddress,
+								sizeof(pPhysicalAddress),
+								&returned,
+								nullptr);
+	if (!bRet)
+	{
+		std::cout << "[-] Failed to translate virtual address to physical address. Error code: " << GetLastError() << std::endl;
+		return nullptr;
+	}
+	else
+	{
+		if (!pPhysicalAddress)
+		{
+			std::cout << "[-] Translation returned a null physical address." << std::endl;
+			return nullptr;
+		}
+	}
 	return pPhysicalAddress;
 }

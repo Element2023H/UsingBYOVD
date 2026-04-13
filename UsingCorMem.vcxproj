@@ -21,7 +21,7 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{1f17c418-582b-46c9-af87-a0013bd0e183}</ProjectGuid>
+    <ProjectGuid>{19037D5B-6296-D37D-F1B4-BF5A5F7A764C}</ProjectGuid>
     <RootNamespace>UsingCorMem</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
