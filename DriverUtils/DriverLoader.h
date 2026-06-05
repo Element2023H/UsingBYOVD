@@ -2,7 +2,6 @@
 #include <windows.h>
 #include <string>
 
-
 namespace DriverLoader
 {
 	enum class AllocationMode
@@ -66,6 +65,31 @@ namespace DriverLoader
 		PS_PROTECTION*	Protection);
 
 	BOOLEAN
+	SetProcessSignatureLevel(
+		ULONG64			Process,
+		ULONG			OffsetOfSignatureLevel,
+		UCHAR*			SignatureLevel);
+
+	BOOLEAN 
+	GetProcessSignatureLevel(
+		ULONG64 Process, 
+		ULONG	OffsetOfSignatureLevel,
+		UCHAR*	SignatureLevel);
+
+
+	PS_PROTECTION
+	GetProcessProtection(
+		ULONG64			Process,
+		ULONG			OffsetOfProtection);
+
+	BOOL
+	DumpLsass(
+		HANDLE		  ProcessHandle,
+		DWORD		  Pid,
+		HANDLE		  FileHandle);
+
+
+	BOOLEAN
 	SetSignatureLevel(
 		ULONG64			Process,
 		ULONG			OffsetOfSignatureLevel,
@@ -83,5 +107,6 @@ namespace DriverLoader
 	MapperDriver(
 		const std::string_view DriverPath,
 		AllocationMode Mode = AllocationMode::AllocatePool);
+
 }
 
